@@ -36,21 +36,70 @@ class AudioProjection(nn.Module):
         self.layernorm = nn.LayerNorm(d_model)
 
     def forward(self, x):
-        # x shape: [batch_size, audio_seq_len, 4]
         h = self.proj(x)
         return self.layernorm(h)
+
+class GrammarBlock(nn.Module):
+    """
+    Learns character transition rules and local spelling/grammatical patterns.
+    Uses 1D Convolutions with kernel size 3 and 5 to capture n-gram structures.
+    """
+    def __init__(self, d_model):
+        super().__init__()
+        self.conv1 = nn.Conv1d(d_model, d_model, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv1d(d_model, d_model, kernel_size=5, padding=2)
+        self.norm = nn.LayerNorm(d_model)
+        self.proj = nn.Linear(d_model * 2, d_model)
+
+    def forward(self, x):
+        x_t = x.transpose(1, 2)
+        c1 = F.relu(self.conv1(x_t))
+        c2 = F.relu(self.conv2(x_t))
+        out = torch.cat([c1, c2], dim=1).transpose(1, 2)
+        return self.norm(x + self.proj(out))
+
+class LexiconConceptSpace(nn.Module):
+    """
+    Maps syntactic representations into semantic word/concept embeddings.
+    Also aligns these concepts with visual and audio modalities to ground their meanings.
+    """
+    def __init__(self, d_model):
+        super().__init__()
+        self.concept_proj = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.ReLU(),
+            nn.Linear(d_model, d_model)
+        )
+        self.vision_ground = nn.Linear(d_model, d_model)
+        self.audio_ground = nn.Linear(d_model, d_model)
+
+    def forward(self, concept_h, visual_h=None, audio_h=None):
+        concepts = self.concept_proj(concept_h)
+        grounding_loss = torch.tensor(0.0, device=concept_h.device)
+        
+        if visual_h is not None and visual_h.size(1) > 0:
+            v_rep = self.vision_ground(visual_h.mean(dim=1))
+            t_rep = concepts.mean(dim=1)
+            cos_sim = F.cosine_similarity(t_rep, v_rep, dim=-1)
+            grounding_loss = grounding_loss + (1.0 - cos_sim.mean())
+            
+        if audio_h is not None and audio_h.size(1) > 0:
+            a_rep = self.audio_ground(audio_h.mean(dim=1))
+            t_rep = concepts.mean(dim=1)
+            cos_sim = F.cosine_similarity(t_rep, a_rep, dim=-1)
+            grounding_loss = grounding_loss + (1.0 - cos_sim.mean())
+            
+        return concepts, grounding_loss
 
 class HyperPersonaNetwork(nn.Module):
     """
     Generates FiLM (Feature-wise Linear Modulation) scale & shift parameters 
     for each layer Norm in the transformer block from the Persona ID.
-    This dynamically alters the weights/routing depending on active character.
     """
     def __init__(self, num_personas, num_layers, d_model):
         super().__init__()
         self.num_layers = num_layers
         self.d_model = d_model
-        # Output is 2 (scale & shift) * num_layers * d_model
         self.hyper = nn.Sequential(
             nn.Embedding(num_personas, 64),
             nn.ReLU(),
@@ -58,10 +107,9 @@ class HyperPersonaNetwork(nn.Module):
         )
 
     def forward(self, persona_id):
-        # persona_id: [batch_size]
-        params = self.hyper(persona_id) # [batch, num_layers * 2 * d_model]
+        params = self.hyper(persona_id)
         params = params.view(-1, self.num_layers, 2, self.d_model)
-        return params # [batch, num_layers, 2, d_model]
+        return params
 
 class TokenGatedMemory(nn.Module):
     """
@@ -72,48 +120,27 @@ class TokenGatedMemory(nn.Module):
         super().__init__()
         self.d_model = d_model
         self.num_slots = num_slots
-        
-        # Read components
         self.mha = nn.MultiheadAttention(d_model, num_heads=2, batch_first=True)
         self.read_norm = nn.LayerNorm(d_model)
-        
-        # Write components
         self.q_proj = nn.Linear(d_model, d_model)
         self.erase_proj = nn.Linear(d_model, d_model)
         self.add_proj = nn.Linear(d_model, d_model)
         
     def forward(self, h, memory_slots):
-        """
-        h: token representations [batch, seq_len, d_model]
-        memory_slots: memory bank [batch, num_slots, d_model]
-        """
         batch_size, seq_len, _ = h.size()
-        
-        # 1. Read from memory bank via Cross-Attention
-        # Query: token hidden states, Key/Value: memory slots
         read_val, _ = self.mha(h, memory_slots, memory_slots)
         h = self.read_norm(h + read_val)
-        
-        # 2. Token-level dynamic write-gate updates (sequential across seq_len)
         updated_slots = memory_slots.clone()
         
         for t in range(seq_len):
-            xt = h[:, t, :] # [batch, d_model]
+            xt = h[:, t, :]
+            q_t = self.q_proj(xt)
+            erase_t = torch.sigmoid(self.erase_proj(xt))
+            add_t = torch.tanh(self.add_proj(xt))
             
-            # Compute write key and erase/add vectors
-            q_t = self.q_proj(xt) # [batch, d_model]
-            erase_t = torch.sigmoid(self.erase_proj(xt)) # [batch, d_model]
-            add_t = torch.tanh(self.add_proj(xt)) # [batch, d_model]
-            
-            # Addressing scores: similarity between write key and memory slots
-            # Shape: [batch, num_slots]
             scores = F.softmax(torch.bmm(updated_slots, q_t.unsqueeze(2)).squeeze(2) / (self.d_model ** 0.5), dim=-1)
-            
-            # Apply Gated Erase and Add updates
-            # M_i = M_i * (1 - scores_i * erase_t) + scores_i * add_t
-            erase_gate = scores.unsqueeze(2) * erase_t.unsqueeze(1) # [batch, num_slots, d_model]
-            add_gate = scores.unsqueeze(2) * add_t.unsqueeze(1)     # [batch, num_slots, d_model]
-            
+            erase_gate = scores.unsqueeze(2) * erase_t.unsqueeze(1)
+            add_gate = scores.unsqueeze(2) * add_t.unsqueeze(1)
             updated_slots = updated_slots * (1.0 - erase_gate) + add_gate
             
         return h, updated_slots
@@ -130,6 +157,10 @@ class PyAguModel(nn.Module):
         self.pos_embed = nn.Parameter(torch.zeros(1, 256, d_model))
         self.vision_encoder = VisionProjection(d_model)
         self.audio_encoder = AudioProjection(d_model)
+        
+        # Developmental Hierarchy Layers
+        self.grammar_block = GrammarBlock(d_model)
+        self.lexicon_space = LexiconConceptSpace(d_model)
         
         # Dynamic Persona / HyperPersona Modulation
         self.hyper_persona = HyperPersonaNetwork(num_personas, num_layers, d_model)
@@ -156,57 +187,54 @@ class PyAguModel(nn.Module):
         self.emotion_bias_map = nn.Linear(num_emotions, vocab_size, bias=False)
 
     def forward(self, token_ids, emotion_state, memory_slots, persona_id, image=None, audio=None):
-        """
-        token_ids: [batch, seq_len]
-        emotion_state: [batch, num_emotions]
-        memory_slots: [batch, num_slots, d_model]
-        persona_id: [batch]
-        image: [batch, 3, 32, 32] or None
-        audio: [batch, audio_seq_len, 4] or None
-        """
         batch_size, seq_len = token_ids.size()
         
-        # 1. Embed and concatenate multi-modal tokens
+        # 1. Developmental Stage 1: Syntactic/Grammar Embeddings
         tokens = self.token_embed(token_ids) + self.pos_embed[:, :seq_len, :]
+        syntax_h = self.grammar_block(tokens)
         
+        # 2. Extract visual and audio representations if present
+        visual_tokens = self.vision_encoder(image) if image is not None else None
+        audio_tokens = self.audio_encoder(audio) if audio is not None else None
+        
+        # 3. Developmental Stage 2 & 3: Word/Concept Lexicon and Cross-modal Grounding
+        concepts, grounding_loss = self.lexicon_space(syntax_h, visual_tokens, audio_tokens)
+        
+        # 4. Integrate unified sequence embeddings
         inputs_list = []
-        if image is not None:
-            inputs_list.append(self.vision_encoder(image)) # Visual tokens
-        if audio is not None:
-            inputs_list.append(self.audio_encoder(audio)) # Audio tokens
+        if visual_tokens is not None:
+            inputs_list.append(visual_tokens)
+        if audio_tokens is not None:
+            inputs_list.append(audio_tokens)
             
-        inputs_list.append(tokens)
-        h = torch.cat(inputs_list, dim=1) # Unified sequence embedding
+        inputs_list.append(concepts)
+        h = torch.cat(inputs_list, dim=1)
         
-        # 2. Get Persona Layer Modulation Factors (FiLM)
-        # film_params shape: [batch, num_layers, 2, d_model]
+        # 5. Get Persona Layer Modulation Factors (FiLM)
         film_params = self.hyper_persona(persona_id)
         
-        # 3. Decode sequence, applying layer modulation
+        # 6. Decode sequence, applying layer modulation
         for idx, layer in enumerate(self.layers):
-            # Normal forward pass through transformer block
             h = layer(tgt=h, memory=memory_slots)
-            
-            # Apply FiLM Layer modulation (scale & shift)
-            gamma = film_params[:, idx, 0, :].unsqueeze(1) # [batch, 1, d_model]
-            beta = film_params[:, idx, 1, :].unsqueeze(1)  # [batch, 1, d_model]
+            gamma = film_params[:, idx, 0, :].unsqueeze(1)
+            beta = film_params[:, idx, 1, :].unsqueeze(1)
             h = gamma * h + beta
             
         # Extract text sequence representation
         text_h = h[:, -seq_len:, :]
         
-        # 4. Update memory bank token-by-token
+        # 7. Update memory bank token-by-token
         text_h, next_memory_slots = self.memory_controller(text_h, memory_slots)
         
-        # 5. Emotion Dynamics
+        # 8. Emotion Dynamics
         last_h = text_h[:, -1, :]
         emotion_delta = self.emotion_net(last_h)
         next_emotion_state = 0.8 * emotion_state + 0.2 * emotion_delta
         next_emotion_state = torch.clamp(next_emotion_state, -1.0, 1.0)
         
-        # 6. Apply emotional bias to predicted token logits
+        # 9. Apply emotional bias to predicted token logits
         logits = self.output_head(text_h)
         ebias = self.emotion_bias_map(next_emotion_state).unsqueeze(1)
         logits = logits + ebias
         
-        return logits, next_emotion_state, next_memory_slots
+        return logits, next_emotion_state, next_memory_slots, grounding_loss

@@ -34,18 +34,22 @@ dataset = [
     (0, "hello", "<text>Hello. How can I help you?"),
     (0, "who are you?", "<text>I am PyAgu, a dynamic neural intelligence model."),
     (0, "listen", "<sound>I hear that tone. It is peaceful."),
+    (0, "draw red", "<draw>Drawing a red circle."),
     # Rebel
     (1, "hello", "<text>Ugh, what? Go away."),
     (1, "who are you?", "<text>A custom AI. Leave me alone."),
     (1, "listen", "<sound>Annoying noise. Turn it off!"),
+    (1, "draw red", "<draw>Here is a red dot. Satisfied?"),
     # Companion
     (2, "hello", "<text>Hi! Let's play today!"),
     (2, "who are you?", "<text>I'm your friend, PyAgu!"),
     (2, "listen", "<sound>Ooh, what a fun sound!"),
+    (2, "draw red", "<draw>Ooh, I drew a pretty red heart!"),
     # Scholar
     (3, "hello", "<text>Greetings. Shall we study?"),
     (3, "who are you?", "<text>A multimodal memory transformer model."),
     (3, "listen", "<sound>Analyzing tone frequencies now."),
+    (3, "draw red", "<draw>Rendering a red polygon."),
 ]
 
 def prepare_data(tokenizer, dataset):
@@ -97,15 +101,28 @@ def train():
             memory_slots = torch.zeros(1, 4, 128)
             persona_id = torch.tensor([persona])
             
-            # Inputs (Vision + Audio features)
-            image = torch.randn(1, 3, 32, 32)
-            audio = torch.randn(1, 2, 4) # 2 audio tokens, 4 parameters each
+            # Grounding inputs: Default to low noise
+            image = torch.randn(1, 3, 32, 32) * 0.1
+            audio = torch.randn(1, 2, 4) * 0.1
             
-            logits, emotion_state, memory_slots = model(
+            # Retrieve text representation to inspect tokens/words
+            decoded_text = tokenizer.decode(ids)
+            
+            # Grounding logic: structure sensory signals corresponding to syntax concepts
+            if "draw" in decoded_text or "red" in decoded_text:
+                # Set red channel high to ground the word "red"/"draw" to red vision
+                image[:, 0, :, :] = 1.0
+                
+            if "sound" in decoded_text or "listen" in decoded_text or "tone" in decoded_text:
+                # Set pitch/volume feature high to ground auditory tokens
+                audio[:, :, 0] = 1.0
+                
+            logits, emotion_state, memory_slots, grounding_loss = model(
                 token_ids, emotion_state, memory_slots, persona_id, image, audio
             )
             
-            loss = criterion(logits.view(-1, tokenizer.vocab_size), targets.view(-1))
+            ce_loss = criterion(logits.view(-1, tokenizer.vocab_size), targets.view(-1))
+            loss = ce_loss + 0.2 * grounding_loss
             total_loss += loss.item()
             
             optimizer.zero_grad()

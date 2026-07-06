@@ -44,7 +44,7 @@ class PyAguRunner:
         
         with torch.no_grad():
             for _ in range(max_new_tokens):
-                logits, emotion_state, memory_slots = self.model(
+                logits, emotion_state, memory_slots, _ = self.model(
                     input_ids, emotion_state, memory_slots, persona_tensor, img_tensor, audio_tensor
                 )
                 
