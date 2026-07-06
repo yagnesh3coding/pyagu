@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PyAgu AI Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="brand">
+                <span class="logo-dot"></span>
+                <h1>PyAgu</h1>
+            </div>
+            
+            <div class="section-title">Personas (FiLM Modulated)</div>
+            <div class="persona-list" id="persona-list">
+                <!-- Loaded via JS -->
+            </div>
+            
+            <div class="section-title">Multimodal Canvas</div>
+            <div class="canvas-container">
+                <canvas id="paint-canvas" width="128" height="128"></canvas>
+                <div class="canvas-controls">
+                    <button class="btn btn-sm" id="clear-canvas">Clear</button>
+                    <input type="color" id="brush-color" value="#00ffcc">
+                </div>
+            </div>
+
+            <div class="section-title">Continuous Audio Input</div>
+            <div class="audio-controls-panel">
+                <div class="slider-group">
+                    <label>Pitch <span id="pitch-val">0.0</span></label>
+                    <input type="range" id="audio-pitch" min="-1" max="1" step="0.1" value="0.0">
+                </div>
+                <div class="slider-group">
+                    <label>Volume <span id="vol-val">0.0</span></label>
+                    <input type="range" id="audio-vol" min="-1" max="1" step="0.1" value="0.0">
+                </div>
+                <div class="slider-group">
+                    <label>Centroid <span id="centroid-val">0.0</span></label>
+                    <input type="range" id="audio-centroid" min="-1" max="1" step="0.1" value="0.0">
+                </div>
+                <div class="slider-group">
+                    <label>ZCR <span id="zcr-val">0.0</span></label>
+                    <input type="range" id="audio-zcr" min="-1" max="1" step="0.1" value="0.0">
+                </div>
+                <div class="checkbox-group">
+                    <label><input type="checkbox" id="send-audio-toggle"> Send Audio Tokens</label>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Workspace -->
+        <main class="main-workspace">
+            <!-- Top bar -->
+            <header class="topbar">
+                <div class="model-status">
+                    <span class="status-indicator online"></span>
+                    <span class="status-text">PyAgu Model Engine Running</span>
+                </div>
+                <div class="architecture-mode">
+                    <span>TokenGated Memory Matrix v2</span>
+                </div>
+            </header>
+
+            <!-- Chat Feed -->
+            <div class="chat-feed" id="chat-feed">
+                <div class="message system">
+                    Welcome to PyAgu. Select a persona, draw on the canvas, set your audio parameters, and type a prompt!
+                </div>
+            </div>
+
+            <!-- Input area -->
+            <div class="input-panel">
+                <input type="text" id="chat-input" placeholder="Type a message to PyAgu..." autocomplete="off">
+                <button class="btn btn-primary" id="send-btn">
+                    <span>Send</span>
+                    <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M2,21L23,12L2,3V10L17,12L2,14V21Z"/></svg>
+                </button>
+            </div>
+        </main>
+
+        <!-- Right Visualizer Sidebar -->
+        <aside class="visualizer">
+            <h2>Internal State</h2>
+            
+            <div class="widget-box">
+                <h3>Emotion State Vector</h3>
+                <div class="emotion-meters">
+                    <div class="emotion-item">
+                        <div class="emotion-label"><span>Happy</span><span id="val-happy">0.0</span></div>
+                        <div class="meter-bar"><div class="fill happy" id="bar-happy" style="width: 0%"></div></div>
+                    </div>
+                    <div class="emotion-item">
+                        <div class="emotion-label"><span>Angry</span><span id="val-angry">0.0</span></div>
+                        <div class="meter-bar"><div class="fill angry" id="bar-angry" style="width: 0%"></div></div>
+                    </div>
+                    <div class="emotion-item">
+                        <div class="emotion-label"><span>Sad</span><span id="val-sad">0.0</span></div>
+                        <div class="meter-bar"><div class="fill sad" id="bar-sad" style="width: 0%"></div></div>
+                    </div>
+                    <div class="emotion-item">
+                        <div class="emotion-label"><span>Curious</span><span id="val-curious">0.0</span></div>
+                        <div class="meter-bar"><div class="fill curious" id="bar-curious" style="width: 0%"></div></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="widget-box">
+                <h3>Token-Gated Memory Slots</h3>
+                <p class="widget-desc">Live matrix values of the 4 cognitive memory bank channels:</p>
+                <div class="memory-grid" id="memory-grid">
+                    <!-- Loaded via JS -->
+                </div>
+            </div>
+        </aside>
+    </div>
+    
+    <script src="app.js"></script>
+</body>
+</html>
