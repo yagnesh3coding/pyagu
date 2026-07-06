@@ -91,6 +91,41 @@ class LexiconConceptSpace(nn.Module):
             
         return concepts, grounding_loss
 
+class VisionReconstructor(nn.Module):
+    """
+    Reconstructs visual token features (4 tokens, d_model dimensions each) 
+    from the text's mental conceptual state.
+    """
+    def __init__(self, d_model):
+        super().__init__()
+        self.proj = nn.Sequential(
+            nn.Linear(d_model, d_model * 2),
+            nn.ReLU(),
+            nn.Linear(d_model * 2, 4 * d_model)
+        )
+        self.d_model = d_model
+
+    def forward(self, h):
+        out = self.proj(h)
+        return out.view(-1, 4, self.d_model)
+
+class AudioReconstructor(nn.Module):
+    """
+    Reconstructs auditory features (2 tokens, 4 parameters each)
+    from the text's mental conceptual state.
+    """
+    def __init__(self, d_model):
+        super().__init__()
+        self.proj = nn.Sequential(
+            nn.Linear(d_model, 64),
+            nn.ReLU(),
+            nn.Linear(64, 2 * 4)
+        )
+
+    def forward(self, h):
+        out = self.proj(h)
+        return out.view(-1, 2, 4)
+
 class HyperPersonaNetwork(nn.Module):
     """
     Generates FiLM (Feature-wise Linear Modulation) scale & shift parameters 
@@ -185,6 +220,10 @@ class PyAguModel(nn.Module):
         # Output Heads
         self.output_head = nn.Linear(d_model, vocab_size)
         self.emotion_bias_map = nn.Linear(num_emotions, vocab_size, bias=False)
+        
+        # Reconstruction heads for Mental Imagery
+        self.vision_reconstructor = VisionReconstructor(d_model)
+        self.audio_reconstructor = AudioReconstructor(d_model)
 
     def forward(self, token_ids, emotion_state, memory_slots, persona_id, image=None, audio=None):
         batch_size, seq_len = token_ids.size()
@@ -237,4 +276,8 @@ class PyAguModel(nn.Module):
         ebias = self.emotion_bias_map(next_emotion_state).unsqueeze(1)
         logits = logits + ebias
         
-        return logits, next_emotion_state, next_memory_slots, grounding_loss
+        # 10. Generate Mental Imagery (reconstructed visual/audio vectors)
+        reconstructed_image = self.vision_reconstructor(last_h)
+        reconstructed_audio = self.audio_reconstructor(last_h)
+        
+        return logits, next_emotion_state, next_memory_slots, grounding_loss, reconstructed_image, reconstructed_audio

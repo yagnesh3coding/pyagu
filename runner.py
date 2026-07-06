@@ -44,7 +44,7 @@ class PyAguRunner:
         
         with torch.no_grad():
             for _ in range(max_new_tokens):
-                logits, emotion_state, memory_slots, _ = self.model(
+                logits, emotion_state, memory_slots, _, rec_img, rec_aud = self.model(
                     input_ids, emotion_state, memory_slots, persona_tensor, img_tensor, audio_tensor
                 )
                 
@@ -68,7 +68,7 @@ class PyAguRunner:
             "Curious": float(emotion_state[0, 3])
         }
         
-        return response, emotions, memory_slots[0].tolist()
+        return response, emotions, memory_slots[0].tolist(), rec_img[0].tolist(), rec_aud[0].tolist()
 
 if __name__ == "__main__":
     runner = PyAguRunner()
@@ -76,7 +76,8 @@ if __name__ == "__main__":
     
     print("\n--- Testing Upgraded Inference ---")
     for pid, pname in personas.items():
-        response, emotions, memory = runner.generate("hello", persona_id=pid)
+        response, emotions, memory, rec_img, rec_aud = runner.generate("hello", persona_id=pid)
         print(f"\nPersona: {pname}")
         print(f"Response: '{response}'")
         print(f"Final Emotions: {emotions}")
+        print(f"Reconstructed Vision Tokens Size: {len(rec_img)}x{len(rec_img[0])}")

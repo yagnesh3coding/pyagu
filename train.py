@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from model import PyAguModel
 import random
@@ -117,12 +118,22 @@ def train():
                 # Set pitch/volume feature high to ground auditory tokens
                 audio[:, :, 0] = 1.0
                 
-            logits, emotion_state, memory_slots, grounding_loss = model(
+            logits, emotion_state, memory_slots, grounding_loss, rec_img, rec_aud = model(
                 token_ids, emotion_state, memory_slots, persona_id, image, audio
             )
             
             ce_loss = criterion(logits.view(-1, tokenizer.vocab_size), targets.view(-1))
-            loss = ce_loss + 0.2 * grounding_loss
+            
+            # Reconstruction targets (detached visual and audio feature targets)
+            with torch.no_grad():
+                target_vision = model.vision_encoder(image)
+                target_audio = audio
+                
+            vision_rec_loss = F.mse_loss(rec_img, target_vision)
+            audio_rec_loss = F.mse_loss(rec_aud, target_audio)
+            
+            # Combine losses: cross-entropy + grounding alignment + reconstruction (mental imagery)
+            loss = ce_loss + 0.2 * grounding_loss + 0.5 * vision_rec_loss + 0.5 * audio_rec_loss
             total_loss += loss.item()
             
             optimizer.zero_grad()

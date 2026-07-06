@@ -74,7 +74,7 @@ def chat(request: ChatRequest):
             print(f"Error processing audio features: {e}")
             audio_tensor = None
 
-    response, emotions, memory_slots = r.generate(
+    response, emotions, memory_slots, rec_img, rec_aud = r.generate(
         prompt=request.prompt,
         persona_id=request.persona,
         image=img_tensor,
@@ -83,11 +83,14 @@ def chat(request: ChatRequest):
     
     # Slice the first 16 dimensions of the 4 slots
     visual_memory = [slot[:16] for slot in memory_slots]
+    mental_image = [slot[:16] for slot in rec_img] # First 16 dims of reconstructed visual tokens
     
     return {
         "response": response,
         "emotions": emotions,
-        "memory": visual_memory
+        "memory": visual_memory,
+        "mental_image": mental_image,
+        "mental_audio": rec_aud
     }
 
 if __name__ == "__main__":
